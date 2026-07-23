@@ -51,9 +51,9 @@ export default function App() {
       return;
     }
 
-    // status === 'ativo' → confirma o dispositivo
+    // status === 'ativo' → confirma o dispositivo (até 2 autorizados por conta)
     const deviceId = getDeviceId();
-    const { data: deviceAtual, error: errDevice } = await supabase.rpc('registar_dispositivo', {
+    const { data: autorizado, error: errDevice } = await supabase.rpc('registar_dispositivo', {
       p_device_id: deviceId,
     });
 
@@ -64,7 +64,7 @@ export default function App() {
       return;
     }
 
-    if (deviceAtual !== deviceId) {
+    if (!autorizado) {
       setLojista(perfil);
       setGate('dispositivo');
       setChecking(false);
