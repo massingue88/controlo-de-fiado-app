@@ -19,7 +19,7 @@ const CONTENT = {
     icon: ShieldAlert,
     color: BRICK,
     title: 'Dispositivo não autorizado',
-    text: 'Esta conta já está associada a outro dispositivo. Contacta o suporte se precisas de mudar de telemóvel/computador: 861482794 (WhatsApp/chamadas) ou massingue88@gmail.com.',
+    text: 'Esta conta já está associada a 2 dispositivos (o máximo permitido). Contacta o suporte se precisas de autorizar este: 861482794 (WhatsApp/chamadas) ou massingue88@gmail.com.',
   },
 };
 
