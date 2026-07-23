@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Plus, ArrowLeft, Search, X, Store, Phone, CircleAlert,
   Trash2, HelpCircle, LogOut, Download, MessageCircle,
+  BarChart3, AlertTriangle, Pencil,
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { INK, PAPER, CARD, TEAL, BRICK, GOLD, LINE } from './theme';
@@ -16,12 +17,16 @@ export default function Dashboard({ lojista, onProfileChange }) {
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [newLimite, setNewLimite] = useState('');
   const [showTxForm, setShowTxForm] = useState(null);
   const [txAmount, setTxAmount] = useState('');
   const [txDesc, setTxDesc] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [editingLimite, setEditingLimite] = useState(false);
+  const [limiteValue, setLimiteValue] = useState('');
+  const [periodoRelatorio, setPeriodoRelatorio] = useState('hoje');
 
   const carregarDados = useCallback(async () => {
     setLoadingData(true);
@@ -83,14 +88,30 @@ export default function Dashboard({ lojista, onProfileChange }) {
   async function addCustomer() {
     if (!newName.trim()) return;
     setBusy(true);
+    const limite = newLimite.trim() ? parseFloat(newLimite.replace(',', '.')) : null;
     const { error } = await supabase.from('clientes').insert({
       lojista_id: lojista.id,
       nome: newName.trim(),
       telefone: newPhone.trim() || null,
+      limite_credito: limite && limite > 0 ? limite : null,
     });
     setBusy(false);
     if (error) { setErrorMsg('Não foi possível guardar o cliente.'); return; }
-    setNewName(''); setNewPhone(''); setShowAddCustomer(false);
+    setNewName(''); setNewPhone(''); setNewLimite(''); setShowAddCustomer(false);
+    carregarDados();
+  }
+
+  async function guardarLimite() {
+    if (!selectedId) return;
+    const limite = limiteValue.trim() ? parseFloat(limiteValue.replace(',', '.')) : null;
+    setBusy(true);
+    const { error } = await supabase
+      .from('clientes')
+      .update({ limite_credito: limite && limite > 0 ? limite : null })
+      .eq('id', selectedId);
+    setBusy(false);
+    if (error) { setErrorMsg('Não foi possível guardar o limite.'); return; }
+    setEditingLimite(false);
     carregarDados();
   }
 
@@ -152,6 +173,22 @@ export default function Dashboard({ lojista, onProfileChange }) {
     return `https://wa.me/${numero}?text=${encodeURIComponent(msg)}`;
   }
 
+  function dadosRelatorio(periodo) {
+    const agora = new Date();
+    let inicio;
+    if (periodo === 'hoje') {
+      inicio = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
+    } else if (periodo === 'semana') {
+      inicio = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() - 6);
+    } else {
+      inicio = new Date(agora.getFullYear(), agora.getMonth(), 1);
+    }
+    const txsPeriodo = transacoes.filter((t) => new Date(t.criado_em) >= inicio);
+    const totalFiado = txsPeriodo.filter((t) => t.tipo === 'fiado').reduce((s, t) => s + Number(t.valor), 0);
+    const totalPagamento = txsPeriodo.filter((t) => t.tipo === 'pagamento').reduce((s, t) => s + Number(t.valor), 0);
+    return { totalFiado, totalPagamento, saldoLiquido: totalFiado - totalPagamento, count: txsPeriodo.length };
+  }
+
   const totalOwed = clientes.reduce((sum, c) => sum + Math.max(0, balanceFor(c.id)), 0);
 
   const filteredCustomers = clientes
@@ -177,6 +214,9 @@ export default function Dashboard({ lojista, onProfileChange }) {
                   <h1 className="font-display text-xl">{lojista.nome_loja}</h1>
                 </div>
                 <div className="flex items-center gap-1">
+                  <button onClick={() => setView('relatorio')} className="p-1.5" style={{ color: INK, opacity: 0.6 }} aria-label="Relatório">
+                    <BarChart3 size={19} />
+                  </button>
                   <button onClick={() => setShowHelp(true)} className="p-1.5" style={{ color: INK, opacity: 0.6 }} aria-label="Ajuda">
                     <HelpCircle size={20} />
                   </button>
@@ -236,6 +276,7 @@ export default function Dashboard({ lojista, onProfileChange }) {
               )}
               {!loadingData && filteredCustomers.map((c) => {
                 const overdue = c.balance > 0 && c.last && daysSince(c.last.criado_em) > 20;
+                const overLimit = c.limite_credito && c.balance > Number(c.limite_credito);
                 return (
                   <button
                     key={c.id}
@@ -251,9 +292,11 @@ export default function Dashboard({ lojista, onProfileChange }) {
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium text-sm">{c.nome}</span>
                         {overdue && <CircleAlert size={14} style={{ color: GOLD }} />}
+                        {overLimit && <AlertTriangle size={14} style={{ color: BRICK }} />}
                       </div>
                       <div className="text-xs mt-0.5" style={{ color: INK, opacity: 0.5 }}>
                         {c.last ? `há ${daysSince(c.last.criado_em)} dia${daysSince(c.last.criado_em) !== 1 ? 's' : ''}` : 'sem movimentos'}
+                        {overLimit && <span style={{ color: BRICK }}> · acima do limite</span>}
                       </div>
                     </div>
                     <div className="font-mono text-sm font-semibold" style={{ color: c.balance > 0 ? BRICK : c.balance < 0 ? GOLD : TEAL }}>
@@ -263,6 +306,68 @@ export default function Dashboard({ lojista, onProfileChange }) {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {view === 'relatorio' && (
+          <div className="pb-10">
+            <div className="px-5 pt-6 pb-4" style={{ borderBottom: `2px solid ${INK}` }}>
+              <button onClick={() => setView('dashboard')} className="flex items-center gap-1 text-sm mb-3" style={{ color: TEAL }}>
+                <ArrowLeft size={16} /> Voltar
+              </button>
+              <h2 className="font-display text-2xl">Relatório</h2>
+            </div>
+
+            <div className="mx-5 mt-4 flex gap-2">
+              {[
+                { id: 'hoje', label: 'Hoje' },
+                { id: 'semana', label: '7 dias' },
+                { id: 'mes', label: 'Este mês' },
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setPeriodoRelatorio(p.id)}
+                  className="flex-1 rounded-lg py-2 text-sm font-medium"
+                  style={{
+                    background: periodoRelatorio === p.id ? TEAL : CARD,
+                    color: periodoRelatorio === p.id ? '#fff' : INK,
+                    border: `1px solid ${periodoRelatorio === p.id ? TEAL : LINE}`,
+                  }}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
+            {(() => {
+              const r = dadosRelatorio(periodoRelatorio);
+              return (
+                <div className="mx-5 mt-4 space-y-3">
+                  <div className="rounded-lg p-4" style={{ background: CARD, border: `1px solid ${LINE}` }}>
+                    <div className="text-xs uppercase tracking-wide" style={{ color: INK, opacity: 0.55 }}>Vendido a fiado</div>
+                    <div className="font-mono text-2xl font-semibold mt-1" style={{ color: BRICK }}>{formatMT(r.totalFiado)}</div>
+                  </div>
+                  <div className="rounded-lg p-4" style={{ background: CARD, border: `1px solid ${LINE}` }}>
+                    <div className="text-xs uppercase tracking-wide" style={{ color: INK, opacity: 0.55 }}>Recebido em pagamentos</div>
+                    <div className="font-mono text-2xl font-semibold mt-1" style={{ color: TEAL }}>{formatMT(r.totalPagamento)}</div>
+                  </div>
+                  <div className="rounded-lg p-4" style={{ background: CARD, border: `1px solid ${LINE}` }}>
+                    <div className="text-xs uppercase tracking-wide" style={{ color: INK, opacity: 0.55 }}>Saldo líquido do período</div>
+                    <div className="font-mono text-2xl font-semibold mt-1" style={{ color: r.saldoLiquido > 0 ? BRICK : GOLD }}>
+                      {r.saldoLiquido > 0 ? '+' : ''}{formatMT(r.saldoLiquido)}
+                    </div>
+                    <div className="text-xs mt-1" style={{ color: INK, opacity: 0.5 }}>
+                      {r.saldoLiquido > 0
+                        ? 'Vendeu mais a fiado do que recebeu neste período.'
+                        : 'Recebeu mais do que vendeu a fiado neste período.'}
+                    </div>
+                  </div>
+                  <div className="text-xs text-center" style={{ color: INK, opacity: 0.45 }}>
+                    {r.count} movimento{r.count !== 1 ? 's' : ''} neste período
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -301,6 +406,44 @@ export default function Dashboard({ lojista, onProfileChange }) {
               )}
             </div>
 
+            <div className="mx-5 mt-3 rounded-lg p-3 flex items-center justify-between" style={{ background: CARD, border: `1px solid ${LINE}` }}>
+              {editingLimite ? (
+                <div className="flex-1 flex items-center gap-2">
+                  <input
+                    autoFocus
+                    value={limiteValue}
+                    onChange={(e) => setLimiteValue(e.target.value)}
+                    placeholder="Sem limite"
+                    inputMode="decimal"
+                    className="flex-1 rounded-md px-2 py-1.5 text-sm outline-none font-mono"
+                    style={{ border: `1px solid ${LINE}` }}
+                  />
+                  <button disabled={busy} onClick={guardarLimite} className="text-xs font-medium rounded-md px-2 py-1.5 text-white" style={{ background: TEAL }}>Guardar</button>
+                  <button onClick={() => setEditingLimite(false)} className="text-xs px-2 py-1.5" style={{ color: INK, opacity: 0.6 }}>Cancelar</button>
+                </div>
+              ) : (
+                <>
+                  <div className="text-xs" style={{ color: INK, opacity: 0.6 }}>
+                    Limite de crédito: <span className="font-mono">{selectedCustomer.limite_credito ? formatMT(Number(selectedCustomer.limite_credito)) : 'sem limite definido'}</span>
+                  </div>
+                  <button
+                    onClick={() => { setLimiteValue(selectedCustomer.limite_credito ? String(selectedCustomer.limite_credito) : ''); setEditingLimite(true); }}
+                    className="flex items-center gap-1 text-xs"
+                    style={{ color: TEAL }}
+                  >
+                    <Pencil size={12} /> Editar
+                  </button>
+                </>
+              )}
+            </div>
+
+            {selectedCustomer.limite_credito && selectedBalance > Number(selectedCustomer.limite_credito) && (
+              <div className="mx-5 mt-2 flex items-start gap-2 text-xs rounded-md px-3 py-2" style={{ background: '#F7E9E7', color: BRICK }}>
+                <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>Este cliente já ultrapassou o limite de crédito definido ({formatMT(Number(selectedCustomer.limite_credito))}).</span>
+              </div>
+            )}
+
             <div className="mx-5 mt-3 flex gap-2">
               <button onClick={() => setShowTxForm('fiado')} className="flex-1 rounded-lg py-2.5 text-sm font-medium text-white" style={{ background: BRICK }}>+ Registar fiado</button>
               <button onClick={() => setShowTxForm('pagamento')} className="flex-1 rounded-lg py-2.5 text-sm font-medium text-white" style={{ background: TEAL }}>+ Registar pagamento</button>
@@ -311,6 +454,18 @@ export default function Dashboard({ lojista, onProfileChange }) {
                 <div className="text-sm font-medium mb-2">{showTxForm === 'fiado' ? 'Nova venda a fiado' : 'Novo pagamento recebido'}</div>
                 <input autoFocus value={txAmount} onChange={(e) => setTxAmount(e.target.value)} placeholder="Valor em MT" inputMode="decimal" className="w-full rounded-md px-3 py-2 text-sm outline-none mb-2 font-mono" style={{ border: `1px solid ${LINE}` }} />
                 <input value={txDesc} onChange={(e) => setTxDesc(e.target.value)} placeholder={showTxForm === 'fiado' ? 'O que levou (opcional)' : 'Observação (opcional)'} className="w-full rounded-md px-3 py-2 text-sm outline-none mb-3" style={{ border: `1px solid ${LINE}` }} />
+                {showTxForm === 'fiado' && selectedCustomer.limite_credito && (() => {
+                  const valorNum = parseFloat(txAmount.replace(',', '.'));
+                  if (!valorNum || valorNum <= 0) return null;
+                  const projetado = selectedBalance + valorNum;
+                  if (projetado <= Number(selectedCustomer.limite_credito)) return null;
+                  return (
+                    <div className="flex items-start gap-2 text-xs rounded-md px-3 py-2 mb-3" style={{ background: '#F6EFDD', color: GOLD }}>
+                      <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                      <span>Este fiado deixa o saldo em {formatMT(projetado)}, acima do limite de {formatMT(Number(selectedCustomer.limite_credito))} deste cliente.</span>
+                    </div>
+                  );
+                })()}
                 <div className="flex gap-2">
                   <button disabled={busy} onClick={() => addTransaction(showTxForm)} className="flex-1 rounded-md py-2 text-sm font-medium text-white" style={{ background: showTxForm === 'fiado' ? BRICK : TEAL, opacity: busy ? 0.6 : 1 }}>Guardar</button>
                   <button onClick={() => { setShowTxForm(null); setTxAmount(''); setTxDesc(''); }} className="rounded-md px-4 py-2 text-sm" style={{ border: `1px solid ${LINE}` }}>Cancelar</button>
@@ -345,7 +500,8 @@ export default function Dashboard({ lojista, onProfileChange }) {
       {showAddCustomer && (
         <Modal onClose={() => setShowAddCustomer(false)} title="Novo cliente">
           <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Nome do cliente" className="w-full rounded-md px-3 py-2 text-sm outline-none mb-2" style={{ border: `1px solid ${LINE}` }} />
-          <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="Contacto (opcional, com código de país p/ WhatsApp)" className="w-full rounded-md px-3 py-2 text-sm outline-none mb-4" style={{ border: `1px solid ${LINE}` }} />
+          <input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="Contacto (opcional, com código de país p/ WhatsApp)" className="w-full rounded-md px-3 py-2 text-sm outline-none mb-2" style={{ border: `1px solid ${LINE}` }} />
+          <input value={newLimite} onChange={(e) => setNewLimite(e.target.value)} placeholder="Limite de crédito em MT (opcional)" inputMode="decimal" className="w-full rounded-md px-3 py-2 text-sm outline-none mb-4 font-mono" style={{ border: `1px solid ${LINE}` }} />
           <button disabled={busy} onClick={addCustomer} className="w-full rounded-md py-2.5 text-sm font-medium text-white" style={{ background: TEAL, opacity: busy ? 0.6 : 1 }}>Guardar cliente</button>
         </Modal>
       )}
@@ -357,6 +513,8 @@ export default function Dashboard({ lojista, onProfileChange }) {
             <li><strong>2. Registe o fiado.</strong> Sempre que vender a crédito, abra o cliente e toque em "Registar fiado".</li>
             <li><strong>3. Registe o pagamento.</strong> Quando o cliente pagar, toque em "Registar pagamento".</li>
             <li><strong>O saldo atualiza-se sozinho</strong> e a lista mostra sempre quem deve mais primeiro.</li>
+            <li><strong>Limite de crédito (opcional).</strong> Defina um limite por cliente para ser avisado quando ele se aproxima ou ultrapassa esse valor.</li>
+            <li><strong>Relatório.</strong> Toque no ícone de gráfico no topo para ver o total vendido a fiado e recebido em pagamentos, por dia, semana ou mês.</li>
           </ol>
           <p className="text-xs mt-3" style={{ color: INK, opacity: 0.5 }}>Os seus dados ficam guardados de forma segura e privada — só a sua conta tem acesso a eles.</p>
         </Modal>
